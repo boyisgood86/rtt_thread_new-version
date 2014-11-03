@@ -1,0 +1,448 @@
+#include <rtthread.h>
+#include <string.h>
+#include <dfs_posix.h>
+
+#include "dev_opt.h"
+rt_uint8_t add_dev(dev_t *dev)
+{
+    rt_int8_t fd;
+    rt_uint8_t i;
+
+    struct stat buf;
+    memset(&buf,0,sizeof(buf));
+    dev_t *tmpbuff = RT_NULL;
+    if((fd=open(DEV,DFS_O_CREAT|DFS_O_RDWR,0))<0)
+    {
+        rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+        return FAILE;
+    }
+     rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+    stat(DEV, &buf);
+    if(buf.st_size>0)
+    {
+        tmpbuff = (dev_t*)rt_malloc(buf.st_size);
+        if(0==tmpbuff)
+        {
+            rt_kprintf("%s:%s Memory allocation failure\n",__func__,__LINE__);
+            goto failed;
+        }
+        if(read(fd,tmpbuff,buf.st_size)<buf.st_size)
+        {
+            rt_kprintf("%s:%d Read %s error\n",__func__,__LINE__,DEV);
+            goto failed;
+        }
+        for(i=0;i<(buf.st_size/sizeof(dev_t));i++)
+        {
+            if(rt_memcmp((tmpbuff+i)->mac,dev->mac,MAC_LEN)==0)
+            {
+                rt_kprintf("%s:%d Device existed\n",__func__,__LINE__);
+                goto exist;
+            }
+        }
+    }
+    if(buf.st_size>0)
+    {
+        lseek(fd,0,SEEK_END);
+    }
+    
+    if(write(fd,dev,sizeof(dev_t))<sizeof(dev_t))
+    {
+        rt_kprintf("%s:%d Write %s error\n",__func__,__LINE__,DEV);
+        goto failed;
+    }
+    goto success;
+success:
+	if(!tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return SUCCESS;
+	
+failed:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return FAILE;
+
+exist:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return EXIST;
+
+}
+
+rt_uint8_t del_dev(dev_t *dev)
+{
+    rt_int8_t fd;
+    rt_uint8_t i;
+    struct stat buf;
+    dev_t *tmpbuff = RT_NULL;
+    dev_t tmp;
+    rt_memset(&tmp,0,sizeof(dev_t));
+    rt_memset(&buf,0,sizeof(buf));
+    if((fd = open(DEV, DFS_O_CREAT|DFS_O_RDWR,0)<0))
+    {
+        rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+        return FAILE;
+    }
+    rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+    stat(DEV, &buf);
+    
+    rt_kprintf("%s,%d: buf.st_size = %d\n", __func__,__LINE__,buf.st_size);
+    rt_kprintf("%s:%d device amc: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x \n",__func__,__LINE__,
+                          dev->mac[0],dev->mac[1],dev->mac[2],dev->mac[3],dev->mac[4],dev->mac[5],dev->mac[6],dev->mac[7]);
+                
+    if(buf.st_size>0)
+    {
+        tmpbuff = (dev_t*)rt_malloc(buf.st_size);
+        rt_memset(tmpbuff,0,buf.st_size);
+        if(0==tmpbuff)
+        {
+            rt_kprintf("%s:%d Memory allocation failure\n",__func__,__LINE__);
+             goto failed;
+        }
+        if(read(fd,tmpbuff,buf.st_size)<buf.st_size)
+        {
+            rt_kprintf("%s:%d Read %s error\n",__func__,__LINE__,DEV);
+             goto failed;
+        }
+        
+        close(fd);
+                
+        if((fd = open(DEV, DFS_O_CREAT|DFS_O_RDWR|DFS_O_TRUNC,0)<0))
+        {
+            rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+            return FAILE;
+        }
+        rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+        for(i=0;i<(buf.st_size/sizeof(dev_t));i++)
+        {
+          rt_kprintf("%s:%d device amc: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x \n",__func__,__LINE__,
+                          (tmpbuff+i)->mac[0],(tmpbuff+i)->mac[1],(tmpbuff+i)->mac[2],(tmpbuff+i)->mac[3],(tmpbuff+i)->mac[4],(tmpbuff+i)->mac[5],(tmpbuff+i)->mac[6],(tmpbuff+i)->mac[7]);
+            if(rt_memcmp((tmpbuff+i)->mac,dev->mac,MAC_LEN)==0)
+            {
+                continue;
+            }
+            write(fd,tmpbuff+i,sizeof(dev_t));
+        }
+        
+         goto success;
+    }
+	goto failed;
+
+success:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return SUCCESS;
+	
+failed:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return FAILE;
+
+}
+
+/*
+rt_uint8_t exist_dev(dev_t *dev)
+{
+    rt_int8_t fd;
+    rt_uint8_t i;
+    struct stat buf;
+    dev_t *tmpbuff = RT_NULL;
+    if((fd = open(DEV, DFS_O_CREAT|DFS_O_RDWR,0))<0)
+    {
+        rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+        list_mem();
+        return FAILE;
+    }
+//rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+    stat(DEV, &buf);
+//rt_kprintf("%s:%d buf.st_size = %d\n",__func__,__LINE__,buf.st_size);
+    if(buf.st_size>0)
+    {
+        tmpbuff = (dev_t*)rt_malloc(buf.st_size);
+        rt_memset(tmpbuff,0,buf.st_size);
+        if(0==tmpbuff)
+        {
+            rt_kprintf("%s:%d Memory allocation failure\n",__func__,__LINE__);
+            goto failed;
+        }
+        if(read(fd,tmpbuff,buf.st_size)<buf.st_size)
+        {
+            rt_kprintf("%s:%d Read %s error\n",__func__,__LINE__,DEV);
+            goto failed;
+        }
+        for(i=0;i<(buf.st_size/sizeof(dev_t));i++)
+        {
+            if(rt_memcmp((tmpbuff+i)->mac,dev->mac,MAC_LEN)==0)
+            {
+//                rt_kprintf("%s:%d device amc: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x shortadd = %04x\n",__func__,__LINE__,
+//                           dev->mac[0],dev->mac[1],dev->mac[2],dev->mac[3],dev->mac[4],dev->mac[5],dev->mac[6],dev->mac[7],dev->shortadd);
+                dev->stat = (tmpbuff+i)->stat;
+                dev->shortadd = (tmpbuff+i)->shortadd;
+//                rt_kprintf("%s:%d device amc: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x shortadd = %04x\n",__func__,__LINE__,
+//                           dev->mac[0],dev->mac[1],dev->mac[2],dev->mac[3],dev->mac[4],dev->mac[5],dev->mac[6],dev->mac[7],dev->shortadd);
+                goto success;
+				
+            }
+        }
+        rt_kprintf("%s:%d device not find\n",__func__,__LINE__);
+    }
+   goto failed;
+   
+success:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return SUCCESS;
+	
+failed:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return FAILE;
+
+}
+*/
+rt_uint8_t exist_dev(dev_t *dev,int n)
+{
+    rt_int8_t fd;
+    rt_uint8_t i,j;
+    struct stat buf;
+    dev_t *tmpbuff = RT_NULL;
+    if((fd = open(DEV, DFS_O_CREAT|DFS_O_RDWR,0))<0)
+    {
+        rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+        list_mem();
+        return FAILE;
+    }
+//rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+    stat(DEV, &buf);
+//rt_kprintf("%s:%d buf.st_size = %d\n",__func__,__LINE__,buf.st_size);
+    if(buf.st_size>0)
+    {
+        tmpbuff = (dev_t*)rt_malloc(buf.st_size);
+        rt_memset(tmpbuff,0,buf.st_size);
+        if(0==tmpbuff)
+        {
+            rt_kprintf("%s:%d Memory allocation failure\n",__func__,__LINE__);
+            goto failed;
+        }
+        if(read(fd,tmpbuff,buf.st_size)<buf.st_size)
+        {
+            rt_kprintf("%s:%d Read %s error\n",__func__,__LINE__,DEV);
+            goto failed;
+        }
+		for(j=0;j<n;j++)
+		{
+			for(i=0;i<(buf.st_size/sizeof(dev_t));i++)
+	        {
+	            if(rt_memcmp((tmpbuff+i)->mac,(dev+j)->mac,MAC_LEN)==0)
+	            {
+	                (dev+j)->stat = (tmpbuff+i)->stat;
+	                (dev+j)->shortadd = (tmpbuff+i)->shortadd;
+	            }
+	        }
+		}
+        
+    }
+   goto failed;
+   
+success:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return SUCCESS;
+	
+failed:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return FAILE;
+
+}
+
+
+rt_uint8_t change_dev(dev_t *dev)
+{
+    rt_int8_t fd;
+    rt_uint8_t i;
+    struct stat buf;
+    dev_t *tmpbuff = RT_NULL;
+    if((fd = open(DEV, O_RDWR|O_CREAT,0)<0))
+    {
+        rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+        return FAILE;
+    }
+    rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+    stat(DEV, &buf);
+    if(buf.st_size>0)
+    {
+        tmpbuff = (dev_t*)rt_malloc(buf.st_size);
+        if(0==tmpbuff)
+        {
+            rt_kprintf("%s:%d Memory allocation failure\n",__func__,__LINE__);
+            goto failed;
+        }
+        if(read(fd,tmpbuff,buf.st_size)<buf.st_size)
+        {
+            rt_kprintf("%s:%d Read %s error\n",__func__,__LINE__,DEV);
+            goto failed;
+        }
+        for(i=0;i<(buf.st_size/sizeof(dev_t));i++)
+        {
+            if(rt_memcmp((tmpbuff+i)->mac,dev->mac,MAC_LEN)==0 || (tmpbuff+i)->shortadd==dev->shortadd)
+            {
+                (tmpbuff+i)->stat = dev->stat;
+                
+                lseek(fd,0,DFS_SEEK_SET);
+                write(fd,tmpbuff,buf.st_size);
+                goto success;
+            }
+        }
+    }
+   goto failed;
+   
+success:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return SUCCESS;
+	
+failed:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+	return FAILE;
+
+}
+
+rt_uint8_t change_shortadd_dev(dev_t *dev)
+{
+    rt_int8_t fd;
+    rt_uint8_t i;
+    rt_uint8_t tmpmac[8] = {0};
+    struct stat buf;
+    dev_t *tmpbuff =  RT_NULL;
+    if((fd = open(DEV, O_RDWR|O_CREAT,0)<0))
+    {
+        rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+        return FAILE;
+    }
+   
+    rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+    stat(DEV, &buf);
+    if(buf.st_size>0)
+    {
+        tmpbuff = (dev_t*)rt_malloc(buf.st_size);
+        if(0==tmpbuff)
+        {
+            rt_kprintf("%s:%d Memory allocation failure\n",__func__,__LINE__);
+            goto failed;
+        }
+        if(read(fd,tmpbuff,buf.st_size)<buf.st_size)
+        {
+            rt_kprintf("%s:%d Read %s error\n",__func__,__LINE__,DEV);
+            goto failed;
+        }
+        for(i=0;i<(buf.st_size/sizeof(dev_t));i++)
+        {
+            if(rt_memcmp((tmpbuff+i)->mac,dev->mac,MAC_LEN)==0)
+            {
+                (tmpbuff+i)->shortadd=dev->shortadd;
+                (tmpbuff+i)->stat = dev->stat;
+                lseek(fd,0,DFS_SEEK_SET);
+                if(write(fd,tmpbuff,buf.st_size)<0)
+                {
+					goto failed;
+                }
+                rt_kprintf("%s:%d device amc: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x shortadd = %04x\n",__func__,__LINE__,
+                           dev->mac[0],dev->mac[1],dev->mac[2],dev->mac[3],dev->mac[4],dev->mac[5],dev->mac[6],dev->mac[7],dev->shortadd);
+				goto success;
+            }
+            if(rt_memcmp(dev->mac,tmpmac,MAC_LEN)==0 && (tmpbuff+i)->shortadd==dev->shortadd)
+            {
+                (tmpbuff+i)->shortadd=0xffff;;
+                (tmpbuff+i)->stat = dev->stat;
+                lseek(fd,0,DFS_SEEK_SET);
+                if(write(fd,tmpbuff,buf.st_size)<0)
+                {
+					goto failed;
+                }
+				goto success;
+            }
+        }
+    }
+//    lseek(fd,0,DFS_SEEK_END);
+    rt_kprintf("%s:%d device amc: %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x shortadd = %04x\n",__func__,__LINE__,
+                           dev->mac[0],dev->mac[1],dev->mac[2],dev->mac[3],dev->mac[4],dev->mac[5],dev->mac[6],dev->mac[7],dev->shortadd);
+    if(write(fd,dev,sizeof(dev_t))<0)
+    {
+		goto failed;
+    }
+    
+
+success:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+    return SUCCESS;
+	
+failed:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+    return FAILE;
+}
+
+rt_uint8_t dev_list(void **dev,rt_uint8_t *cnt)
+{
+    rt_int8_t fd;
+    rt_uint8_t i;
+    struct stat buf;
+    dev_t *tmpbuff = RT_NULL;
+    if((fd = open(DEV, DFS_O_CREAT|DFS_O_RDWR,0)<0))
+    {
+        rt_kprintf("%s:%d Open %s failed\n",__func__,__LINE__,DEV);
+        return FAILE;
+    }
+    rt_kprintf("%s:%d Open %s fd = %d\n",__func__,__LINE__,DEV,fd);
+    stat(DEV, &buf);
+    if(buf.st_size>0)
+    {
+        tmpbuff = (dev_t*)rt_malloc(buf.st_size);
+        if(0==tmpbuff)
+        {
+            rt_kprintf("%s:%d Memory allocation failure\n",__func__,__LINE__);
+            goto failed;
+        }
+        if(read(fd,tmpbuff,buf.st_size)<buf.st_size)
+        {
+            rt_kprintf("%s:%d Read %s error\n",__func__,__LINE__,DEV);
+            goto failed;
+        }
+        *cnt = buf.st_size/sizeof(dev_t);
+        *dev = tmpbuff;
+        goto success;
+    }
+    *cnt = 0;
+    *dev = 0;
+    goto failed;
+
+success:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+    return SUCCESS;
+	
+failed:
+	if(tmpbuff)
+		rt_free(tmpbuff);
+	close(fd);
+    return FAILE;
+
+}
+
+

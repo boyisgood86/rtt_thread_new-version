@@ -1,0 +1,226 @@
+/*
+ * File      : application.c
+ * This file is part of RT-Thread RTOS
+ * COPYRIGHT (C) 2006, RT-Thread Development Team
+ *
+ * The license and distribution terms for this file may be
+ * found in the file LICENSE in this distribution or at
+ * http://www.rt-thread.org/license/LICENSE
+ *
+ * Change Logs:
+ * Date           Author       Notes
+ * 2009-01-05     Bernard      the first version
+ * 2013-07-12     aozima       update for auto initial.
+ */
+
+/**
+ * @addtogroup STM32
+ */
+/*@{*/
+
+#include <board.h>
+#include <rtthread.h>
+
+#ifdef  RT_USING_COMPONENTS_INIT
+#include <components.h>
+#endif  /* RT_USING_COMPONENTS_INIT */
+
+#ifdef RT_USING_DFS
+/* dfs filesystem:ELM filesystem init */
+#include <dfs_elm.h>
+/* dfs Filesystem APIs */
+#include <dfs_fs.h>
+#endif
+
+#ifdef RT_USING_RTGUI
+#include <rtgui/rtgui.h>
+#include <rtgui/rtgui_server.h>
+#include <rtgui/rtgui_system.h>
+#include <rtgui/driver.h>
+#include <rtgui/calibration.h>
+#endif
+
+#include "led.h"
+#include "ym_uart_app.h"
+
+ALIGN(RT_ALIGN_SIZE)
+
+/*socket mutex*/
+struct rt_mutex socket_mutex;
+/*uart mutex*/
+struct rt_mutex uart_mutex;
+/*start over*/
+static int gateway_start_over = 0;
+
+/*rt_timer*/
+struct rt_timer usart_rx_timer;
+struct rt_semaphore rx_sem;
+
+/*uart 2 device*/
+ym_uart_t uart_2;
+
+extern void rt_hw_spi2_init(void);
+extern void tcp_client(void);
+extern void udp_server(void);
+extern void tcp_echoserver_init(void);
+
+
+/* set timer - timeout callback function s*/
+
+void uart_rx_timeout(void * parameter)
+{
+    rt_timer_stop(&usart_rx_timer);
+    rt_sem_release(&rx_sem);
+}
+
+
+/*tcp client with socket api*/
+static void tcp_client_thread(void *arg)
+{
+  
+//  while(1) {
+//    rt_thread_delay(500);
+//    tcp_client();
+//    rt_thread_delay(10000);
+//    
+//  }
+}
+
+/*read data from zigbee coo*/
+static void uart_read_from_zigbee_thread(void *arg)
+{
+      rt_thread_delay(500);
+      while(1) {
+        uart_read_from_zigbee();
+//        rt_thread_delay(100);
+      }
+}
+
+/* write 0X010b cmd to zigbee coo */
+static void uart_send_cmd_to_zigbee_thread(void *arg)
+{
+    
+    rt_thread_delay(1000);
+    while(1) {
+      if(!uart_send_cmd_to_zigbee()) {
+        break;
+      }
+       rt_thread_delay(100);
+    }
+}
+
+/*udp server with socket api*/
+static void udp_server_thread(void *arg)
+{
+  while(1) {
+    rt_thread_delay(1000);
+        udp_server();
+  }
+}
+
+/* tcp server with raw api */
+static void raw_server_thread(void *arg)
+{
+  while(1) {
+    rt_thread_delay(1000);
+    tcp_echoserver_init();
+    while(1){
+      rt_thread_delay(5000);
+    }
+  }
+}
+
+
+/* main thread entry point */
+void rt_init_thread_entry(void* parameter)
+{
+#ifdef RT_USING_COMPONENTS_INIT
+    /* initialization RT-Thread Components */
+    rt_components_init();
+#endif
+
+#ifdef  RT_USING_FINSH
+    finsh_set_device(RT_CONSOLE_DEVICE_NAME);
+#endif  /* RT_USING_FINSH */
+       
+      rt_hw_spi2_init();  /*Using SPI 2*/
+
+    /* Filesystem Initialization */
+#if defined(RT_USING_DFS) && defined(RT_USING_DFS_ELMFAT)
+     
+     dfs_init();
+     elm_init();
+     
+     if(w25x80_init("flash0", "spi20") != RT_EOK) {
+          MY_DEBUG("%s, %d: w25x80 init faild !\n\r",__func__,__LINE__);
+      } 
+     
+    /* mount sd card fat partition 1 as root directory */
+    if (dfs_mount("flash0", "/", "elm", 0, 0) == 0)
+    {
+        rt_kprintf("File System initialized!\n");
+//        mkfs("elm", "flash0");
+    }
+    else {
+        rt_kprintf("File System initialzation failed!\n");
+        mkfs("elm", "flash0");  /* 如果是spi flash 第一次使用，则打开这里，进行格式化 */
+        MY_DEBUG("mkfs File System\n\r");
+    }
+#endif  /* RT_USING_DFS */
+
+
+#ifdef RT_USING_LWIP
+	#ifdef ENC28J60
+		rt_hw_enc28j60_init();
+	#endif /*ENC28J60*/
+                  
+    #ifdef UDP_SERVER
+          sys_thread_new("udp_server", udp_server_thread, NULL, TCPIP_THREAD_STACKSIZE, (TCPIP_THREAD_PRIO+1));    
+    #endif /* UDP_SERVER */
+          
+#ifdef TCP_SERVER
+          sys_thread_new("raw_server", raw_server_thread, NULL, TCPIP_THREAD_STACKSIZE, (TCPIP_THREAD_PRIO));
+#endif /* TCP_SERVER */
+          
+           
+          
+#ifdef UART_USING
+     sys_thread_new("uart_read", uart_read_from_zigbee_thread, NULL, TCPIP_THREAD_STACKSIZE, (TCPIP_THREAD_PRIO-1));
+     sys_thread_new("uart_write", uart_send_cmd_to_zigbee_thread, NULL, TCPIP_THREAD_STACKSIZE, TCPIP_THREAD_PRIO);
+#endif /* UART_USING */
+                  
+          
+#endif /*RT_USING_LWIP*/
+}
+
+int rt_application_init(void)
+{
+    rt_thread_t init_thread;
+
+    rt_err_t result;
+    
+    rt_memset(&uart_2, 0, sizeof(uart_2));
+    uart_2.uart = RT_NULL;
+    rt_mutex_init(&uart_2.mutex,"uart2",RT_IPC_FLAG_FIFO); //uart_mutex
+    
+    /*init timer-- for timeout , when read uart 2*/
+    rt_sem_init(&rx_sem, "rx_sem",0, RT_IPC_FLAG_FIFO);
+    rt_timer_init(&usart_rx_timer,"rx_timer", uart_rx_timeout, RT_NULL, 2, RT_TIMER_FLAG_ONE_SHOT);   
+    
+#if (RT_THREAD_PRIORITY_MAX == 32)
+    init_thread = rt_thread_create("init",
+                                   rt_init_thread_entry, RT_NULL,
+                                   8192, 8, 20);
+#else
+    init_thread = rt_thread_create("init",
+                                   rt_init_thread_entry, RT_NULL,
+                                   8192, 80, 20);
+#endif
+
+    if (init_thread != RT_NULL)
+        rt_thread_startup(init_thread);
+
+    return 0;
+}
+
+/*@}*/
